@@ -624,3 +624,30 @@ __wrap_pthread_create (pthread_t *thread, const pthread_attr_t *attr,
 	shim_tracef ("pthread_create", (long) start, (long) arg, 0, (long) ret);
 	return ret;
 }
+
+/* ---------------- vita console/file trace ----------------
+ * newlib 的 fd 1/2 不可用, 所有诊断输出走 sceIoWrite(1) (VitaShell 控制台 /
+ * Vita3K pty 实时可见) 并追加到文件. */
+int
+vita_trace_write (const char *b, int n)
+{
+	SceUID fd;
+	sceIoWrite (1, b, n);
+	fd = sceIoOpen ("ux0:data/monoapp/vita-trace.log",
+		SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
+	if (fd >= 0) {
+		sceIoWrite (fd, b, n);
+		sceIoClose (fd);
+	}
+	return n;
+}
+
+/* write(1/2) 转接到 sceIo, 修复 mono 内部日志黑洞 */
+ssize_t
+__wrap_write (int fd, const void *buf, size_t count)
+{
+	extern ssize_t __real_write (int fd, const void *buf, size_t count);
+	if (fd == 1 || fd == 2)
+		return sceIoWrite (fd, buf, count);
+	return __real_write (fd, buf, count);
+}
