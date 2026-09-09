@@ -1,0 +1,21 @@
+diff --git i/mono/eglib/Makefile.am w/mono/eglib/Makefile.am
+index dfdcd0e6..58d1280c 100644
+--- i/mono/eglib/Makefile.am
++++ w/mono/eglib/Makefile.am
+@@ -2,7 +2,7 @@ MAKEFLAGS := $(MAKEFLAGS) --no-builtin-rules
+ 
+ if !ENABLE_MSVC_ONLY
+ 
+-SUBDIRS = . test
++SUBDIRS = .
+ 
+ noinst_LTLIBRARIES = libeglib.la
+ 
+@@ -44,7 +44,6 @@ libeglib_la_SOURCES = \
+ 	gqueue.c	\
+ 	gpath.c		\
+ 	gshell.c	\
+-	gspawn.c	\
+ 	gfile.c		\
+ 	gfile-posix.c	\
+ 	gpattern.c	\

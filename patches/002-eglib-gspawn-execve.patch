@@ -1,0 +1,22 @@
+diff --git i/mono/eglib/gspawn.c w/mono/eglib/gspawn.c
+index 64ac161f..21fcd46c 100644
+--- i/mono/eglib/gspawn.c
++++ w/mono/eglib/gspawn.c
+@@ -96,7 +96,7 @@ extern char **environ;
+ G_END_DECLS
+ #endif
+ 
+-#if !defined (G_OS_WIN32) && defined (HAVE_FORK) && defined (HAVE_EXECV)
++#if !defined (G_OS_WIN32) && defined (HAVE_FORK) && defined (HAVE_EXECVE)
+ static int
+ safe_read (int fd, gchar *buffer, gint count, GError **gerror)
+ {
+@@ -301,7 +301,7 @@ g_spawn_command_line_sync (const gchar *command_line,
+ 			//g_free (argv [0]);
+ 			argv [0] = arg0;
+ 		}
+-		execv (argv [0], argv);
++		execve (argv [0], argv, environ);
+ 		exit (1); /* TODO: What now? */
+ 	}
+ 

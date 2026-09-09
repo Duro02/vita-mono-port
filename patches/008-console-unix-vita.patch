@@ -1,0 +1,30 @@
+diff --git i/mono/metadata/console-unix.c w/mono/metadata/console-unix.c
+index cc9e543f..a3faf78d 100644
+--- i/mono/metadata/console-unix.c
++++ w/mono/metadata/console-unix.c
+@@ -284,10 +284,12 @@ MONO_SIG_HANDLER_FUNC (static, sigcont_handler)
+ 		unused = write (STDOUT_FILENO, keypad_xmit_str, strlen (keypad_xmit_str));
+ 
+ 	// Call previous handler
++#ifndef __vita__
+ 	if (save_sigcont.sa_sigaction != NULL &&
+ 	    save_sigcont.sa_sigaction != (void *)SIG_DFL &&
+ 	    save_sigcont.sa_sigaction != (void *)SIG_IGN)
+ 		(*save_sigcont.sa_sigaction) (MONO_SIG_HANDLER_PARAMS);
++#endif
+ }
+ 
+ MONO_SIG_HANDLER_FUNC (static, sigwinch_handler)
+@@ -297,10 +299,12 @@ MONO_SIG_HANDLER_FUNC (static, sigwinch_handler)
+ 		cols_and_lines = dims;
+ 	
+ 	// Call previous handler
++#ifndef __vita__
+ 	if (save_sigwinch.sa_sigaction != NULL &&
+ 	    save_sigwinch.sa_sigaction != (void *)SIG_DFL &&
+ 	    save_sigwinch.sa_sigaction != (void *)SIG_IGN)
+ 		(*save_sigwinch.sa_sigaction) (MONO_SIG_HANDLER_PARAMS);
++#endif
+ }
+ 
+ /*

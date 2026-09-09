@@ -1,0 +1,17 @@
+diff --git i/mono/utils/mono-threads-posix-signals.c w/mono/utils/mono-threads-posix-signals.c
+index 1e1c4718..2c002ea4 100644
+--- i/mono/utils/mono-threads-posix-signals.c
++++ w/mono/utils/mono-threads-posix-signals.c
+@@ -58,7 +58,12 @@ signal_add_handler (int signo, void (*handler)(int, siginfo_t *, void *), int fl
+ 	struct sigaction sa;
+ 	int ret;
+ 
++#ifdef __vita__
++	/* Vita: 只有单参 handler (shim 将 sa_sigaction 映射到 sa_handler) */
++	sa.sa_handler = (_sig_func_ptr) handler;
++#else
+ 	sa.sa_sigaction = handler;
++#endif
+ 	sigfillset (&sa.sa_mask);
+ 	sa.sa_flags = SA_SIGINFO | flags;
+ 	ret = sigaction (signo, &sa, NULL);

@@ -1,0 +1,38 @@
+diff --git i/mono/mini/mini-runtime.c w/mono/mini/mini-runtime.c
+index f027be73..1ff65806 100644
+--- i/mono/mini/mini-runtime.c
++++ w/mono/mini/mini-runtime.c
+@@ -3318,12 +3318,21 @@ MONO_SIG_HANDLER_FUNC (, mono_sigsegv_signal_handler)
+ 
+ #if defined(HAVE_SIG_INFO)
+ #if !defined(HOST_WIN32)
++#ifdef __vita__
++	/* Vita: siginfo 无 si_addr, SIGSEGV 处理无真实故障地址 */
++	fault_addr = NULL;
++	if (0) {
++		;
++	}
++	int signo = info->si_signo;
++#else
+ 	fault_addr = info->si_addr;
+ 	if (mono_aot_is_pagefault (info->si_addr)) {
+ 		mono_aot_handle_pagefault (info->si_addr);
+ 		return;
+ 	}
+ 	int signo = info->si_signo;
++#endif
+ #else
+ 	int signo = SIGSEGV;
+ #endif
+@@ -3404,7 +3413,11 @@ MONO_SIG_HANDLER_FUNC (, mono_sigsegv_signal_handler)
+ #ifdef HOST_WIN32
+ 	gpointer const debug_fault_addr = (gpointer)MONO_SIG_HANDLER_GET_INFO () ->ep->ExceptionRecord->ExceptionInformation [1];
+ #elif defined (HAVE_SIG_INFO)
++#ifdef __vita__
++	gpointer const debug_fault_addr = NULL;
++#else
+ 	gpointer const debug_fault_addr = MONO_SIG_HANDLER_GET_INFO ()->si_addr;
++#endif
+ #else
+ #error No extra parameter is passed, not even 0, to avoid any confusion.
+ #endif

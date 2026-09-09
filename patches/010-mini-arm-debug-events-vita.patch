@@ -1,0 +1,42 @@
+diff --git i/mono/mini/mini-arm.c w/mono/mini/mini-arm.c
+index 00c0be5f..8a50d2bc 100644
+--- i/mono/mini/mini-arm.c
++++ w/mono/mini/mini-arm.c
+@@ -7317,6 +7317,10 @@ mono_arch_stop_single_stepping (void)
+ gboolean
+ mono_arch_is_single_step_event (void *info, void *sigctx)
+ {
++#ifdef __vita__
++	/* Vita: 无 si_addr, 不支持调试单步 */
++	return FALSE;
++#else
+ 	siginfo_t *sinfo = (siginfo_t*)info;
+ 
+ 	if (!ss_trigger_page)
+@@ -7327,6 +7331,7 @@ mono_arch_is_single_step_event (void *info, void *sigctx)
+ 		return TRUE;
+ 	else
+ 		return FALSE;
++#endif
+ }
+ 
+ /*
+@@ -7337,6 +7342,10 @@ mono_arch_is_single_step_event (void *info, void *sigctx)
+ gboolean
+ mono_arch_is_breakpoint_event (void *info, void *sigctx)
+ {
++#ifdef __vita__
++	/* Vita: 无 si_addr, 不支持调试断点 */
++	return FALSE;
++#else
+ 	siginfo_t *sinfo = (siginfo_t*)info;
+ 
+ 	if (!ss_trigger_page)
+@@ -7351,6 +7360,7 @@ mono_arch_is_breakpoint_event (void *info, void *sigctx)
+ 	} else {
+ 		return FALSE;
+ 	}
++#endif
+ }
+ 
+ /*
