@@ -19,6 +19,29 @@
 #include <sys/types.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/kernel/threadmgr.h>
+#include <psp2/io/fcntl.h>
+
+#define SHIM_TRACE_PATH "ux0:data/monoapp/shim-trace.log"
+
+static void
+shim_trace (const char *msg)
+{
+	char tbuf [256];
+	SceUID fd = sceIoOpen (SHIM_TRACE_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
+	if (fd < 0)
+		return;
+	/* 手工组装, 避免 snprintf %p 依赖 */
+	{
+		int n = 0;
+		const char *s = msg;
+		while (*s && n < (int) sizeof (tbuf) - 2)
+			tbuf [n++] = *s++;
+		tbuf [n++] = '\n';
+		sceIoWrite (fd, tbuf, n);
+	}
+	sceIoClose (fd);
+}
+
 
 /* ---------------- mmap family ---------------- */
 
@@ -39,12 +62,14 @@ static pthread_mutex_t vita_map_lock = PTHREAD_MUTEX_INITIALIZER;
 static size_t
 page_round (size_t v)
 {
+	shim_trace ("page_round");
 	return (v + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 }
 
 static struct vita_mapping *
 vita_map_find (const void *addr)
 {
+	shim_trace ("vita_map_find");
 	struct vita_mapping *m;
 	for (m = vita_mappings; m; m = m->next)
 		if ((const char *)addr >= (const char *)m->base &&
@@ -56,6 +81,7 @@ vita_map_find (const void *addr)
 void *
 mmap (void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 {
+	shim_trace ("mmap");
 	struct vita_mapping *m;
 	SceUID uid;
 	void *base = NULL;
@@ -105,6 +131,7 @@ mmap (void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 int
 munmap (void *addr, size_t len)
 {
+	shim_trace ("munmap");
 	struct vita_mapping *m, **prev;
 	int ret = 0;
 
@@ -133,6 +160,7 @@ munmap (void *addr, size_t len)
 int
 mprotect (void *addr, size_t len, int prot)
 {
+	shim_trace ("mprotect");
 	/* Vita 的权限在分配时确定, 无法动态改.
 	 * RW 数据块上的 EXEC 请求先放行(将来 JIT 走 VM domain). */
 	(void)addr; (void)len; (void)prot;
@@ -142,6 +170,7 @@ mprotect (void *addr, size_t len, int prot)
 int
 msync (void *addr, size_t len, int flags)
 {
+	shim_trace ("msync");
 	(void)addr; (void)len; (void)flags;
 	return 0;
 }
@@ -149,6 +178,7 @@ msync (void *addr, size_t len, int flags)
 int
 madvise (void *addr, size_t len, int advice)
 {
+	shim_trace ("madvise");
 	(void)addr; (void)len; (void)advice;
 	return 0;
 }
@@ -156,6 +186,7 @@ madvise (void *addr, size_t len, int advice)
 int
 mlock (const void *addr, size_t len)
 {
+	shim_trace ("mlock");
 	(void)addr; (void)len;
 	return 0;
 }
@@ -163,6 +194,7 @@ mlock (const void *addr, size_t len)
 int
 munlock (const void *addr, size_t len)
 {
+	shim_trace ("munlock");
 	(void)addr; (void)len;
 	return 0;
 }
@@ -172,6 +204,7 @@ munlock (const void *addr, size_t len)
 int
 sched_yield (void)
 {
+	shim_trace ("sched_yield");
 	sceKernelDelayThread (0);
 	return 0;
 }
@@ -179,6 +212,7 @@ sched_yield (void)
 pid_t
 waitpid (pid_t pid, int *status, int options)
 {
+	shim_trace ("waitpid");
 	(void)pid; (void)options;
 	if (status)
 		*status = 0;
@@ -189,6 +223,7 @@ waitpid (pid_t pid, int *status, int options)
 int
 dup2 (int oldfd, int newfd)
 {
+	shim_trace ("dup2");
 	(void)oldfd; (void)newfd;
 	errno = ENOSYS;
 	return -1;
@@ -197,6 +232,7 @@ dup2 (int oldfd, int newfd)
 int
 symlink (const char *oldpath, const char *newpath)
 {
+	shim_trace ("symlink");
 	(void)oldpath; (void)newpath;
 	errno = ENOSYS;
 	return -1;
@@ -205,6 +241,7 @@ symlink (const char *oldpath, const char *newpath)
 int
 sigaltstack (const stack_t *ss, stack_t *old_ss)
 {
+	shim_trace ("sigaltstack");
 	/* Vita 不支持替代信号栈, 记账式通过 */
 	if (old_ss)
 		memset (old_ss, 0, sizeof (*old_ss));
@@ -218,6 +255,7 @@ sigaltstack (const stack_t *ss, stack_t *old_ss)
 int
 pthread_getattr_np (pthread_t thread, pthread_attr_t *attr)
 {
+	shim_trace ("pthread_getattr_np");
 	if (!attr)
 		return EINVAL;
 	pthread_attr_init (attr);
@@ -230,6 +268,7 @@ pthread_getattr_np (pthread_t thread, pthread_attr_t *attr)
 void *
 dlopen (const char *filename, int flag)
 {
+	shim_trace ("dlopen");
 	(void)filename; (void)flag;
 	return NULL;
 }
@@ -237,6 +276,7 @@ dlopen (const char *filename, int flag)
 void *
 dlsym (void *handle, const char *symbol)
 {
+	shim_trace ("dlsym");
 	(void)handle; (void)symbol;
 	return NULL;
 }
@@ -244,6 +284,7 @@ dlsym (void *handle, const char *symbol)
 int
 dlclose (void *handle)
 {
+	shim_trace ("dlclose");
 	(void)handle;
 	return -1;
 }
@@ -251,6 +292,7 @@ dlclose (void *handle)
 char *
 dlerror (void)
 {
+	shim_trace ("dlerror");
 	return (char *) "dynamic loading not supported on Vita";
 }
 
@@ -259,18 +301,21 @@ dlerror (void)
 void
 openlog (const char *ident, int logopt, int facility)
 {
+	shim_trace ("openlog");
 	(void)ident; (void)logopt; (void)facility;
 }
 
 void
 syslog (int priority, const char *format, ...)
 {
+	shim_trace ("syslog");
 	(void)priority; (void)format;
 }
 
 void
 closelog (void)
 {
+	shim_trace ("closelog");
 }
 
 /* ---------------- termios stubs ---------------- */
@@ -280,6 +325,7 @@ closelog (void)
 int
 tcgetattr (int fd, struct termios *termios_p)
 {
+	shim_trace ("tcgetattr");
 	(void)fd;
 	if (termios_p)
 		memset (termios_p, 0, sizeof (*termios_p));
@@ -289,6 +335,7 @@ tcgetattr (int fd, struct termios *termios_p)
 int
 tcsetattr (int fd, int optional_actions, const struct termios *termios_p)
 {
+	shim_trace ("tcsetattr");
 	(void)fd; (void)optional_actions; (void)termios_p;
 	return 0;
 }
@@ -296,6 +343,7 @@ tcsetattr (int fd, int optional_actions, const struct termios *termios_p)
 int
 ioctl (int fd, unsigned long request, ...)
 {
+	shim_trace ("ioctl");
 	(void)fd; (void)request;
 	return 0;
 }
@@ -303,6 +351,7 @@ ioctl (int fd, unsigned long request, ...)
 int
 tcflush (int fd, int queue_selector)
 {
+	shim_trace ("tcflush");
 	(void)fd; (void)queue_selector;
 	return 0;
 }
@@ -322,6 +371,7 @@ struct passwd {
 struct passwd *
 getpwnam (const char *name)
 {
+	shim_trace ("getpwnam");
 	(void)name;
 	return NULL;
 }
@@ -329,6 +379,7 @@ getpwnam (const char *name)
 struct passwd *
 getpwuid (unsigned int uid)
 {
+	shim_trace ("getpwuid");
 	(void)uid;
 	return NULL;
 }
@@ -336,6 +387,7 @@ getpwuid (unsigned int uid)
 int
 eg_getdtablesize (void)
 {
+	shim_trace ("eg_getdtablesize");
 	return 64;
 }
 
@@ -356,6 +408,7 @@ monoeg_g_spawn_async_with_pipes (const char *working_directory,
 const char *
 mono_w32file_get_file_system_type (const char *path)
 {
+	shim_trace ("mono_w32file_get_file_system_type");
 	(void)path;
 	return "UNKNOWN";
 }
@@ -368,6 +421,7 @@ mono_w32file_get_file_system_type (const char *path)
 int
 sigaction (int signo, const struct sigaction *act, struct sigaction *oldact)
 {
+	shim_trace ("sigaction");
 	_sig_func_ptr old;
 	if (oldact) {
 		old = signal (signo, SIG_DFL);
@@ -390,6 +444,7 @@ sigaction (int signo, const struct sigaction *act, struct sigaction *oldact)
 int
 sigprocmask (int how, const sigset_t *set, sigset_t *oldset)
 {
+	shim_trace ("sigprocmask");
 	(void)how; (void)set;
 	if (oldset)
 		sigemptyset (oldset);
@@ -399,6 +454,7 @@ sigprocmask (int how, const sigset_t *set, sigset_t *oldset)
 int
 sigsuspend (const sigset_t *mask)
 {
+	shim_trace ("sigsuspend");
 	(void)mask;
 	/* 挂起 10ms 并返回 EINTR, 避免忙等 */
 	sceKernelDelayThread (10 * 1000);
@@ -409,6 +465,7 @@ sigsuspend (const sigset_t *mask)
 ssize_t
 readlink (const char *path, char *buf, size_t bufsiz)
 {
+	shim_trace ("readlink");
 	(void)path; (void)buf; (void)bufsiz;
 	errno = EINVAL;
 	return -1;
@@ -420,6 +477,7 @@ readlink (const char *path, char *buf, size_t bufsiz)
 int
 posix_memalign (void **memptr, size_t alignment, size_t size)
 {
+	shim_trace ("posix_memalign");
 	void *p = memalign (alignment, size);
 	if (!p)
 		return ENOMEM;
@@ -430,6 +488,7 @@ posix_memalign (void **memptr, size_t alignment, size_t size)
 int
 posix_madvise (void *addr, size_t len, int advice)
 {
+	shim_trace ("posix_madvise");
 	(void)addr; (void)len; (void)advice;
 	return 0;
 }
@@ -438,6 +497,7 @@ posix_madvise (void *addr, size_t len, int advice)
 void *
 mono_get_local_interfaces (int family, int *interface_count)
 {
+	shim_trace ("mono_get_local_interfaces");
 	(void)family;
 	*interface_count = 0;
 	return NULL;
@@ -450,6 +510,7 @@ mono_get_local_interfaces (int family, int *interface_count)
 long
 __wrap_sysconf (int name)
 {
+	shim_trace ("__wrap_sysconf");
 	extern long __real_sysconf (int name);
 	switch (name) {
 	case _SC_PAGESIZE:         /* == _SC_PAGE_SIZE */

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/io/fcntl.h>
 #include <vita2d.h>
