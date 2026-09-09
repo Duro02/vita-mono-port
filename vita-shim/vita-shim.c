@@ -23,6 +23,22 @@
 
 #define SHIM_TRACE_PATH "ux0:data/monoapp/shim-trace.log"
 
+
+static void
+shim_tracef (const char *func, long a, long b, long c, long ret)
+{
+	char tbuf [160];
+	SceUID fd = sceIoOpen (SHIM_TRACE_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
+	if (fd < 0)
+		return;
+	{
+		int n = snprintf (tbuf, sizeof (tbuf), "%s(%lx,%lx,%lx)=%lx\n", func, a, b, c, ret);
+		if (n > 0)
+			sceIoWrite (fd, tbuf, n);
+	}
+	sceIoClose (fd);
+}
+
 static void
 shim_trace (const char *msg)
 {
@@ -110,10 +126,12 @@ mmap (void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 			sceKernelFreeMemBlock (uid);
 		free (m);
 		errno = ENOMEM;
+		shim_tracef ("mmapFAIL", (long) len, (long) prot, (long) flags, 0);
 		return MAP_FAILED;
 	}
 
 	memset (base, 0, alen);
+	shim_tracef ("mmapOK", (long) len, (long) prot, (long) flags, (long) base);
 
 	m->base = base;
 	m->uid  = uid;
@@ -163,6 +181,7 @@ mprotect (void *addr, size_t len, int prot)
 	shim_trace ("mprotect");
 	/* Vita 的权限在分配时确定, 无法动态改.
 	 * RW 数据块上的 EXEC 请求先放行(将来 JIT 走 VM domain). */
+	shim_tracef ("mprotect", (long) addr, (long) len, (long) prot, 0);
 	(void)addr; (void)len; (void)prot;
 	return 0;
 }
@@ -510,27 +529,98 @@ mono_get_local_interfaces (int family, int *interface_count)
 long
 __wrap_sysconf (int name)
 {
-	shim_trace ("__wrap_sysconf");
 	extern long __real_sysconf (int name);
+	long r;
+	shim_trace ("__wrap_sysconf");
 	switch (name) {
 	case _SC_PAGESIZE:         /* == _SC_PAGE_SIZE */
-		return 4096;
+		r = 4096;
+		break;
 	case _SC_NPROCESSORS_CONF:
 	case _SC_NPROCESSORS_ONLN:
-		return 4;
+		r = 4;
+		break;
 	case _SC_PHYS_PAGES:
-		return (256 * 1024 * 1024) / 4096;
+		r = (256 * 1024 * 1024) / 4096;
+		break;
 	case _SC_AVPHYS_PAGES:
-		return (128 * 1024 * 1024) / 4096;
+		r = (128 * 1024 * 1024) / 4096;
+		break;
 	case _SC_OPEN_MAX:
-		return 1024;
+		r = 1024;
+		break;
 	case _SC_CLK_TCK:
-		return 100;
+		r = 100;
+		break;
 	case _SC_GETPW_R_SIZE_MAX:
-		return 1024;
+		r = 1024;
+		break;
 	case _SC_GETGR_R_SIZE_MAX:
-		return 1024;
+		r = 1024;
+		break;
 	default:
-		return __real_sysconf (name);
+		r = __real_sysconf (name);
+		break;
 	}
+	shim_tracef ("sysconf", (long) name, 0, 0, r);
+	return r;
+}
+
+/* ---------------- traced wraps (链接 -Wl,--wrap=...) ---------------- */
+
+int
+__wrap_open (const char *path, int flags, ...)
+{
+	extern int __real_open (const char *path, int flags, ...);
+	int mode = 0;
+	int ret;
+	if (flags & 0x40 /*O_CREAT*/) {
+		__builtin_va_list ap;
+		__builtin_va_start (ap, flags);
+		mode = __builtin_va_arg (ap, int);
+		__builtin_va_end (ap);
+	}
+	{
+		char tbuf [128];
+		SceUID fd = sceIoOpen (SHIM_TRACE_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
+		if (fd >= 0) {
+			int n = snprintf (tbuf, sizeof (tbuf), "open(%s,%x)=?\n", path ? path : "(null)", flags);
+			if (n > 0)
+				sceIoWrite (fd, tbuf, n);
+			sceIoClose (fd);
+		}
+	}
+	ret = (flags & 0x40) ? __real_open (path, flags, mode) : __real_open (path, flags);
+	{
+		char tbuf [64];
+		SceUID fd = sceIoOpen (SHIM_TRACE_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
+		if (fd >= 0) {
+			int n = snprintf (tbuf, sizeof (tbuf), "open->%d\n", ret);
+			if (n > 0)
+				sceIoWrite (fd, tbuf, n);
+			sceIoClose (fd);
+		}
+	}
+	return ret;
+}
+
+int
+__wrap_close (int fd)
+{
+	extern int __real_close (int fd);
+	shim_tracef ("close", (long) fd, 0, 0, 0);
+	return __real_close (fd);
+}
+
+int
+__wrap_pthread_create (pthread_t *thread, const pthread_attr_t *attr,
+	void *(*start) (void *), void *arg)
+{
+	extern int __real_pthread_create (pthread_t *, const pthread_attr_t *,
+		void *(*) (void *), void *);
+	int ret;
+	shim_tracef ("pthread_create_enter", (long) start, (long) arg, 0, 0);
+	ret = __real_pthread_create (thread, attr, start, arg);
+	shim_tracef ("pthread_create", (long) start, (long) arg, 0, (long) ret);
+	return ret;
 }
