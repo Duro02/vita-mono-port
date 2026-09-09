@@ -28,6 +28,16 @@ log_write (const char *msg)
 	sceIoWrite (1, msg, strlen (msg)); /* VitaShell 控制台 */
 }
 
+static void
+draw_stage (vita2d_pvf *font, const char *msg)
+{
+	vita2d_start_drawing ();
+	vita2d_clear_screen ();
+	vita2d_pvf_draw_text (font, 60, 200, RGBA8(255,255,0,255), 1.6f, msg);
+	vita2d_end_drawing ();
+	vita2d_swap_buffers ();
+}
+
 int
 main (void)
 {
@@ -38,10 +48,26 @@ main (void)
 	vita2d_pvf *font = vita2d_load_default_pvf ();
 	log_write ("launcher: font loaded\n");
 
-	/* 解释器模式 */
+	/* mono 内部日志 (stdout/stderr) 重定向到文件 */
+	close (1);
+	close (2);
+	{
+		SceUID out = sceIoOpen (APP_DIR "/mono-internal.log",
+			SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+		(void)out; /* 期望 fd 1; 再开一个给 fd 2 */
+		SceUID err = sceIoOpen (APP_DIR "/mono-internal.log",
+			SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
+		(void)err; /* 期望 fd 2 */
+	}
+	log_write ("launcher: stdio redirected\n");
+
+	/* 解释器模式 + 内部日志 */
 	setenv ("MONO_ENV_OPTIONS", "--interpreter", 1);
+	setenv ("MONO_LOG_LEVEL", "debug", 1);
+	setenv ("MONO_LOG_MASK", "asm,type", 1);
 	setenv ("MONO_PATH", APP_DIR, 1);
 
+	draw_stage (font, "STAGE: mono_jit_init...");
 	log_write ("launcher: calling mono_jit_init\n");
 	MonoDomain *domain = mono_jit_init (ASSEMBLY);
 	if (!domain) {
@@ -56,6 +82,7 @@ main (void)
 		return 1;
 	}
 	log_write ("launcher: runtime up, opening assembly\n");
+	draw_stage (font, "STAGE: assembly_open...");
 
 	MonoAssembly *assembly = mono_domain_assembly_open (domain, ASSEMBLY);
 	if (!assembly) {
@@ -64,6 +91,7 @@ main (void)
 		return 2;
 	}
 	log_write ("launcher: invoking Main\n");
+	draw_stage (font, "STAGE: jit_exec Main...");
 
 	mono_jit_exec (domain, assembly, 0, NULL);
 	log_write ("launcher: Main returned\n");

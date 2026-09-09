@@ -25,7 +25,7 @@ MONO_INC="-I$MONO_SRC -I$MONO_SRC/mono -I$MONO_SRC/mono/eglib -I$MONO_SRC/mono/u
 arm-vita-eabi-gcc "$ROOT/vita-launcher/main.c" -o "$OUT/launcher.elf" \
 	$MONO_INC \
 	-D_STRERROR_R_CHAR_P -DHAVE_CONFIG_H \
-	-O2 -Wl,-q \
+	-O2 -Wl,-q -Wl,--wrap=sysconf \
 	"$MONO_SRC/mono/mini/.libs/libmonosgen-2.0.a" \
 	"$MONO_SRC/mono/metadata/.libs/libmonoruntimesgen.a" \
 	"$MONO_SRC/mono/metadata/.libs/libmonoruntime-config.a" \

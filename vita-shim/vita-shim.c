@@ -442,3 +442,34 @@ mono_get_local_interfaces (int family, int *interface_count)
 	*interface_count = 0;
 	return NULL;
 }
+
+/* ---------------- sysconf (newlib-vita 返回 -1/EINVAL) ----------------
+ * 链接时用 -Wl,--wrap=sysconf 启用; 未列出的名字转交真正的 sysconf.
+ * Vita PCH-1000: 4 核 Cortex-A9 (系统占用1核, 用户可用按4报告),
+ * 用户内存约 256MB, 页 4KB. */
+long
+__wrap_sysconf (int name)
+{
+	extern long __real_sysconf (int name);
+	switch (name) {
+	case _SC_PAGESIZE:         /* == _SC_PAGE_SIZE */
+		return 4096;
+	case _SC_NPROCESSORS_CONF:
+	case _SC_NPROCESSORS_ONLN:
+		return 4;
+	case _SC_PHYS_PAGES:
+		return (256 * 1024 * 1024) / 4096;
+	case _SC_AVPHYS_PAGES:
+		return (128 * 1024 * 1024) / 4096;
+	case _SC_OPEN_MAX:
+		return 1024;
+	case _SC_CLK_TCK:
+		return 100;
+	case _SC_GETPW_R_SIZE_MAX:
+		return 1024;
+	case _SC_GETGR_R_SIZE_MAX:
+		return 1024;
+	default:
+		return __real_sysconf (name);
+	}
+}
