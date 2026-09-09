@@ -42,4 +42,7 @@
 /* raise 在部分 TU 中未包含任何声明它的头 */
 int raise (int);
 
+/* sys/signal.h 不声明 signal() (在残缺版顶层 signal.h 里) */
+_sig_func_ptr signal (int signo, _sig_func_ptr func);
+
 #endif /* _VITA_SHIM_SIGNAL_H */

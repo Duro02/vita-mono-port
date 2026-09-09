@@ -39,6 +39,7 @@ CONF_FLAGS="--host=arm-vita-eabi \
   --with-ikvm=no \
   --disable-shared \
   --enable-static \
+  --with-tls=pthread \
   ac_cv_struct_tm_gmtoff=yes"
 
 # -DHAVE_MMAP=1 : configure 检测不到 libc 里的 mmap (在 vita-shim 里), 强制启用
@@ -54,10 +55,18 @@ case "${1:-all}" in
     ./configure $CONF_FLAGS
     ;;
   make)
-    make -C mono/mini -j$(nproc) $MAKE_TARGET
+    make -C mono/eglib -j$(nproc) libeglib.la
+    make -C mono/utils  -j$(nproc) libmonoutils.la libmonomath.la
+    make -C mono/sgen   -j$(nproc) libmonosgen.la
+    make -C mono/metadata -j$(nproc) libmonoruntimesgen.la libmonoruntime-config.la libmonoruntime-support.la
+    make -C mono/mini   -j$(nproc) $MAKE_TARGET
     ;;
   all)
     ./configure $CONF_FLAGS
-    make -C mono/mini -j$(nproc) $MAKE_TARGET
+    make -C mono/eglib -j$(nproc) libeglib.la
+    make -C mono/utils  -j$(nproc) libmonoutils.la libmonomath.la
+    make -C mono/sgen   -j$(nproc) libmonosgen.la
+    make -C mono/metadata -j$(nproc) libmonoruntimesgen.la libmonoruntime-config.la libmonoruntime-support.la
+    make -C mono/mini   -j$(nproc) $MAKE_TARGET
     ;;
 esac

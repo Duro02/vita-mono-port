@@ -306,3 +306,139 @@ tcflush (int fd, int queue_selector)
 	(void)fd; (void)queue_selector;
 	return 0;
 }
+
+/* ---------------- misc stubs for mono link ---------------- */
+
+struct passwd {
+	char *pw_name;
+	char *pw_passwd;
+	unsigned int pw_uid;
+	unsigned int pw_gid;
+	char *pw_gecos;
+	char *pw_dir;
+	char *pw_shell;
+};
+
+struct passwd *
+getpwnam (const char *name)
+{
+	(void)name;
+	return NULL;
+}
+
+struct passwd *
+getpwuid (unsigned int uid)
+{
+	(void)uid;
+	return NULL;
+}
+
+int
+eg_getdtablesize (void)
+{
+	return 64;
+}
+
+int
+monoeg_g_spawn_async_with_pipes (const char *working_directory,
+	char **argv, char **envp, int flags,
+	void *child_setup, void *user_data,
+	int *child_pid, int *standard_input,
+	int *standard_output, int *standard_error, int *exit_status)
+{
+	(void)working_directory; (void)argv; (void)envp; (void)flags;
+	(void)child_setup; (void)user_data; (void)child_pid;
+	(void)standard_input; (void)standard_output; (void)standard_error;
+	(void)exit_status;
+	return 0;
+}
+
+const char *
+mono_w32file_get_file_system_type (const char *path)
+{
+	(void)path;
+	return "UNKNOWN";
+}
+
+
+/* ---------------- signal dispatch (newlib 缺 sigaction) ----------------
+ * Vita 的信号处理走 newlib 的 signal() 表 (libc raise/kill 使用).
+ * sigaction 简单转接; 掩码类调用存根. */
+
+int
+sigaction (int signo, const struct sigaction *act, struct sigaction *oldact)
+{
+	_sig_func_ptr old;
+	if (oldact) {
+		old = signal (signo, SIG_DFL);
+		oldact->sa_handler = old;
+		signal (signo, old);
+		memset (&oldact->sa_mask, 0, sizeof (oldact->sa_mask));
+		oldact->sa_flags = 0;
+	}
+	if (act) {
+		if (act->sa_flags & SA_SIGINFO) {
+			/* 无 SA_SIGINFO 支持; handler 签名不匹配只能尽力 */
+			signal (signo, (_sig_func_ptr) act->sa_sigaction);
+		} else {
+			signal (signo, act->sa_handler);
+		}
+	}
+	return 0;
+}
+
+int
+sigprocmask (int how, const sigset_t *set, sigset_t *oldset)
+{
+	(void)how; (void)set;
+	if (oldset)
+		sigemptyset (oldset);
+	return 0;
+}
+
+int
+sigsuspend (const sigset_t *mask)
+{
+	(void)mask;
+	/* 挂起 10ms 并返回 EINTR, 避免忙等 */
+	sceKernelDelayThread (10 * 1000);
+	errno = EINTR;
+	return -1;
+}
+
+ssize_t
+readlink (const char *path, char *buf, size_t bufsiz)
+{
+	(void)path; (void)buf; (void)bufsiz;
+	errno = EINVAL;
+	return -1;
+}
+
+/* newlib 头声明了 posix_memalign 但 libc 没实现, memalign 有 */
+#include <malloc.h>
+
+int
+posix_memalign (void **memptr, size_t alignment, size_t size)
+{
+	void *p = memalign (alignment, size);
+	if (!p)
+		return ENOMEM;
+	*memptr = p;
+	return 0;
+}
+
+int
+posix_madvise (void *addr, size_t len, int advice)
+{
+	(void)addr; (void)len; (void)advice;
+	return 0;
+}
+
+/* newlib 无 SIOCGIFCONF/getifaddrs: 返回空接口列表 */
+void *
+mono_get_local_interfaces (int family, int *interface_count)
+{
+	(void)family;
+	*interface_count = 0;
+	return NULL;
+}

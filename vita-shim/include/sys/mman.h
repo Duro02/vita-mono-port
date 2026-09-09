@@ -30,6 +30,12 @@ void *mmap (void *addr, size_t len, int prot, int flags, int fd, off_t offset);
 int munmap (void *addr, size_t len);
 int msync (void *addr, size_t len, int flags);
 int madvise (void *addr, size_t len, int advice);
+int posix_madvise (void *addr, size_t len, int advice);
+#define POSIX_MADV_DONTNEED 0
+#define POSIX_MADV_SEQUENTIAL 1
+#define POSIX_MADV_RANDOM 2
+#define POSIX_MADV_WILLNEED 3
+#define POSIX_MADV_NORMAL 4
 int mlock (const void *addr, size_t len);
 int munlock (const void *addr, size_t len);
 

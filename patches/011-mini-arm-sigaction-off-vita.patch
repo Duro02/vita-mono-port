@@ -1,0 +1,14 @@
+diff --git i/mono/mini/mini-arm.h w/mono/mini/mini-arm.h
+index a2213812..27e31779 100644
+--- i/mono/mini/mini-arm.h
++++ w/mono/mini/mini-arm.h
+@@ -324,7 +324,9 @@ typedef struct MonoCompileArch {
+ #define ARM_FIRST_ARG_REG 0
+ #define ARM_LAST_ARG_REG 3
+ 
++#ifndef __vita__
+ #define MONO_ARCH_USE_SIGACTION 1
++#endif
+ 
+ #if defined(HOST_WATCHOS)
+ #undef MONO_ARCH_USE_SIGACTION

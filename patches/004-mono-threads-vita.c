@@ -39,30 +39,6 @@ mono_threads_platform_is_main_thread (void)
 	return pthread_equal (pthread_self (), vita_main_thread);
 }
 
-void
-mono_threads_platform_init (void)
-{
-}
-
-gboolean
-mono_threads_platform_in_critical_region (THREAD_INFO_TYPE *info)
-{
-	return FALSE;
-}
-
-gboolean
-mono_threads_platform_yield (void)
-{
-	sched_yield ();
-	return TRUE;
-}
-
-void
-mono_threads_platform_exit (gsize exit_code)
-{
-	pthread_exit ((void *) exit_code);
-}
-
 guint64
 mono_native_thread_os_id_get (void)
 {
