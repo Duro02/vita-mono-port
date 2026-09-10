@@ -28,7 +28,11 @@ static void
 shim_tracef (const char *func, long a, long b, long c, long ret)
 {
 	char tbuf [160];
-	SceUID fd = sceIoOpen (SHIM_TRACE_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
+	SceUID fd;
+	extern int vita_trace_to_file;
+	if (!vita_trace_to_file)
+		return;
+	fd = sceIoOpen (SHIM_TRACE_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
 	if (fd < 0)
 		return;
 	{
@@ -43,7 +47,12 @@ static void
 shim_trace (const char *msg)
 {
 	char tbuf [256];
-	SceUID fd = sceIoOpen (SHIM_TRACE_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
+	SceUID fd;
+	extern int vita_trace_to_file;
+	(void)msg;
+	if (!vita_trace_to_file)
+		return;
+	fd = sceIoOpen (SHIM_TRACE_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
 	if (fd < 0)
 		return;
 	/* 手工组装, 避免 snprintf %p 依赖 */
@@ -647,16 +656,20 @@ __wrap_pthread_create (pthread_t *thread, const pthread_attr_t *attr,
 /* ---------------- vita console/file trace ----------------
  * newlib 的 fd 1/2 不可用, 所有诊断输出走 sceIoWrite(1) (VitaShell 控制台 /
  * Vita3K pty 实时可见) 并追加到文件. */
+int vita_trace_to_file = 1;
+
 int
 vita_trace_write (const char *b, int n)
 {
 	SceUID fd;
 	sceIoWrite (1, b, n);
-	fd = sceIoOpen ("ux0:data/monoapp/vita-trace.log",
-		SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
-	if (fd >= 0) {
-		sceIoWrite (fd, b, n);
-		sceIoClose (fd);
+	if (vita_trace_to_file) {
+		fd = sceIoOpen ("ux0:data/monoapp/vita-trace.log",
+			SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
+		if (fd >= 0) {
+			sceIoWrite (fd, b, n);
+			sceIoClose (fd);
+		}
 	}
 	return n;
 }
@@ -669,4 +682,25 @@ __wrap_write (int fd, const void *buf, size_t count)
 	if (fd == 1 || fd == 2)
 		return sceIoWrite (fd, buf, count);
 	return __real_write (fd, buf, count);
+}
+
+/* abort/raise 包装: 打印调用, 定位静默 abort */
+void
+__wrap_abort (void)
+{
+	extern void __real_abort (void);
+	const char *m = "WRAP-ABORT called!\n";
+	sceIoWrite (1, m, 22);
+	__real_abort ();
+}
+
+int
+__wrap_raise (int sig)
+{
+	extern int __real_raise (int sig);
+	char b [64];
+	int n = snprintf (b, sizeof (b), "WRAP-RAISE sig=%d\n", sig);
+	if (n > 0)
+		sceIoWrite (1, b, n);
+	return __real_raise (sig);
 }

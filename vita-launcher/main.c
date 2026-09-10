@@ -53,6 +53,7 @@ mono_worker (void *arg)
 	(void)arg;
 	log_write ("worker: thread started\n");
 
+	/* 禁止 JIT 代码生成 (内存无执行权限), 强制纯解释器 */
 	MonoDomain *domain = mono_jit_init (ASSEMBLY);
 	if (!domain) {
 		log_write ("worker: mono_jit_init FAILED\n");
@@ -91,28 +92,19 @@ main (void)
 	g_font = font;
 	log_write ("launcher: font loaded\n");
 
-	/* mono 内部日志 (stdout/stderr) 重定向到文件 */
-	close (1);
-	close (2);
-	{
-		SceUID out = sceIoOpen (APP_DIR "/mono-internal.log",
-			SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-		SceUID err = sceIoOpen (APP_DIR "/mono-internal.log",
-			SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
-		{
-			char b [64];
-			snprintf (b, sizeof (b), "launcher: redirect fds out=%d err=%d\n",
-				(int) out, (int) err);
-			log_write (b);
-		}
-	}
-	log_write ("launcher: stdio redirected\n");
+	/* stdout/stderr 无缓冲直通控制台 (fd1/2 保持打开, 断言信息可见) */
+	setvbuf (stdout, NULL, _IONBF, 0);
+	setvbuf (stderr, NULL, _IONBF, 0);
+	log_write ("launcher: stdio unbuffered\n");
 
 	/* 解释器模式 + 内部日志.
 	 * 注意: 不能用 MONO_PATH (Unix 按 ':' 切分, 会把 "ux0:..." 切碎);
 	 * 改用 mono_set_dirs 直接指定目录 (不切分). mscorlib 路径:
 	 *   ux0:data/monoapp/mono/4.5/mscorlib.dll */
 	setenv ("MONO_ENV_OPTIONS", "--interpreter --trace", 1);
+	setenv ("VITA_TRACE_FILE", "0", 1);
+	setenv ("MONO_GC_PARAMS", "nursery-size=8m", 1);
+	{ extern int vita_trace_to_file; const char *e = getenv ("VITA_TRACE_FILE"); if (e && e [0] == '0') vita_trace_to_file = 0; }
 	setenv ("MONO_LOG_LEVEL", "debug", 1);
 	setenv ("MONO_LOG_MASK", "asm,type,gc", 1);
 	mono_set_dirs (APP_DIR, APP_DIR);
