@@ -112,7 +112,7 @@ main (void)
 	 * 注意: 不能用 MONO_PATH (Unix 按 ':' 切分, 会把 "ux0:..." 切碎);
 	 * 改用 mono_set_dirs 直接指定目录 (不切分). mscorlib 路径:
 	 *   ux0:data/monoapp/mono/4.5/mscorlib.dll */
-	setenv ("MONO_ENV_OPTIONS", "--interpreter", 1);
+	setenv ("MONO_ENV_OPTIONS", "--interpreter --trace", 1);
 	setenv ("MONO_LOG_LEVEL", "debug", 1);
 	setenv ("MONO_LOG_MASK", "asm,type,gc", 1);
 	mono_set_dirs (APP_DIR, APP_DIR);
