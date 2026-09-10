@@ -10,9 +10,12 @@ OUT=$ROOT/vita-launcher/build
 mkdir -p "$OUT"
 
 # 1. vita-shim 静态库
+MONO_SRC_INC="-I$MONO_SRC -I$MONO_SRC/mono -I$MONO_SRC/mono/eglib"
 arm-vita-eabi-gcc -c "$ROOT/vita-shim/vita-shim.c" \
 	-I"$ROOT/vita-shim/include" -O2 -o "$OUT/vita-shim.o"
-arm-vita-eabi-ar rcs "$OUT/libvitashim.a" "$OUT/vita-shim.o"
+arm-vita-eabi-gcc -c "$ROOT/vita-shim/vita-system-native.c" \
+	-I"$ROOT/vita-shim/include" $MONO_SRC_INC -O2 -o "$OUT/vita-system-native.o"
+arm-vita-eabi-ar rcs "$OUT/libvitashim.a" "$OUT/vita-shim.o" "$OUT/vita-system-native.o"
 
 # 2. C# hello world (host mcs, net_4_x profile)
 mkdir -p "$OUT/bcl"

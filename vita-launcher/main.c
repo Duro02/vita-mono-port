@@ -54,6 +54,8 @@ mono_worker (void *arg)
 	log_write ("worker: thread started\n");
 
 	/* 禁止 JIT 代码生成 (内存无执行权限), 强制纯解释器 */
+	void vita_register_dllmap (void);
+	vita_register_dllmap ();
 	MonoDomain *domain = mono_jit_init (ASSEMBLY);
 	if (!domain) {
 		log_write ("worker: mono_jit_init FAILED\n");
@@ -106,7 +108,7 @@ main (void)
 	setenv ("MONO_GC_PARAMS", "nursery-size=8m", 1);
 	{ extern int vita_trace_to_file; const char *e = getenv ("VITA_TRACE_FILE"); if (e && e [0] == '0') vita_trace_to_file = 0; }
 	setenv ("MONO_LOG_LEVEL", "debug", 1);
-	setenv ("MONO_LOG_MASK", "asm,type,gc", 1);
+	setenv ("MONO_LOG_MASK", "asm,type,gc,dll", 1);
 	mono_set_dirs (APP_DIR, APP_DIR);
 
 	pthread_attr_init (&attr);
