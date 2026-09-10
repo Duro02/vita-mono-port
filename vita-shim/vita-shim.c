@@ -704,3 +704,48 @@ __wrap_raise (int sig)
 		sceIoWrite (1, b, n);
 	return __real_raise (sig);
 }
+
+/* ---------------- fcntl (newlib-vita 对控制台 fd 可能返回 -1) ---------------- */
+#include <stdarg.h>
+
+int
+__wrap_fcntl (int fd, int cmd, ...)
+{
+	extern int __real_fcntl (int fd, int cmd, ...);
+	va_list ap;
+	long arg;
+	int ret;
+
+	va_start (ap, cmd);
+	arg = va_arg (ap, long);
+	va_end (ap);
+
+	ret = __real_fcntl (fd, cmd, arg);
+	if (ret != -1)
+		return ret;
+
+	/* 真实调用失败: 对标准 fd 给出合理默认值 */
+	if (fd < 0)
+		return -1;
+	switch (cmd) {
+	case F_GETFL:
+		return O_RDWR;
+	case F_SETFL:
+		return 0;
+#ifdef F_GETFD
+	case F_GETFD:
+		return 0;
+#endif
+#ifdef F_SETFD
+	case F_SETFD:
+		return 0;
+#endif
+#ifdef F_DUPFD
+	case F_DUPFD:
+		return dup (fd);
+#endif
+	default:
+		errno = EINVAL;
+		return -1;
+	}
+}
