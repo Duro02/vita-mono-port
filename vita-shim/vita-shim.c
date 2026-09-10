@@ -131,6 +131,25 @@ mmap (void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 	}
 
 	memset (base, 0, alen);
+
+	/* 文件映射: 把文件内容读进来 (mono 用它加载程序集!) */
+	if (fd >= 0) {
+		off_t cur = lseek (fd, 0, SEEK_CUR);
+		if (cur != (off_t) -1 && lseek (fd, offset, SEEK_SET) == offset) {
+			size_t left = len;
+			char *dst = (char *) base;
+			while (left > 0) {
+				ssize_t r = read (fd, dst, left);
+				if (r <= 0)
+					break;
+				dst += r;
+				left -= (size_t) r;
+			}
+			lseek (fd, cur, SEEK_SET);
+		}
+		shim_tracef ("mmapFILE", (long) len, (long) fd, (long) offset, (long) base);
+	}
+
 	shim_tracef ("mmapOK", (long) len, (long) prot, (long) flags, (long) base);
 
 	m->base = base;

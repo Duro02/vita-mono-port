@@ -1,0 +1,23 @@
+diff --git i/mono/eglib/gmisc-unix.c w/mono/eglib/gmisc-unix.c
+index 2a3afc00..46ddd042 100644
+--- i/mono/eglib/gmisc-unix.c
++++ w/mono/eglib/gmisc-unix.c
+@@ -115,6 +115,18 @@ g_path_is_absolute (const char *filename)
+ {
+ 	g_return_val_if_fail (filename != NULL, FALSE);
+ 
++#ifdef __vita__
++	/* Vita 设备路径 (如 ux0:, app0:, vs0:, sa0:) 即绝对路径:
++	 * 第一个 '/' 之前出现 ':' 即为设备前缀 */
++	{
++		const char *c;
++		for (c = filename; *c && *c != '/' && *c != '\\'; ++c) {
++			if (*c == ':')
++				return TRUE;
++		}
++	}
++#endif
++
+ 	return (*filename == '/');
+ }
+ 
