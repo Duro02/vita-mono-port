@@ -56,14 +56,47 @@ mono_worker (void *arg)
 	/* 禁止 JIT 代码生成 (内存无执行权限), 强制纯解释器 */
 	void vita_register_dllmap (void);
 	vita_register_dllmap ();
-	MonoDomain *domain = mono_jit_init (ASSEMBLY);
+	/* 运行目标: ux0:data/monoapp/run.txt 第一行, 缺省 hello.exe */
+	char runasm [128];
+	{
+		SceUID rf = sceIoOpen (APP_DIR "/run.txt", SCE_O_RDONLY, 0777);
+		if (rf >= 0) {
+			int n = sceIoRead (rf, runasm, sizeof (runasm) - 1);
+			sceIoClose (rf);
+			if (n > 0) {
+				int i;
+				runasm [n] = 0;
+				for (i = 0; runasm [i] && runasm [i] != '\r' && runasm [i] != '\n'; i++)
+					;
+				runasm [i] = 0;
+			} else {
+				strcpy (runasm, ASSEMBLY);
+			}
+		} else {
+			strcpy (runasm, ASSEMBLY);
+		}
+	}
+	{
+		char b [160];
+		snprintf (b, sizeof (b), "worker: target %s\n", runasm);
+		log_write (b);
+	}
+	void vita_register_dllmap (void);
+	vita_register_dllmap ();
+	/* SGen 堆校验 + 分阶段日志: 每次回收前验证 nursery (坏堆立刻 abort),
+	 * level 3 打印 major 各阶段, 定位 T03 损坏. */
+	{
+		extern void mono_gc_debug_set (const char *options);
+		mono_gc_debug_set ("4,verify-before-collections");
+	}
+	MonoDomain *domain = mono_jit_init (runasm);
 	if (!domain) {
 		log_write ("worker: mono_jit_init FAILED\n");
 		return (void *) 1;
 	}
 	log_write ("worker: runtime up, opening assembly\n");
 
-	MonoAssembly *assembly = mono_domain_assembly_open (domain, ASSEMBLY);
+	MonoAssembly *assembly = mono_domain_assembly_open (domain, runasm);
 	if (!assembly) {
 		log_write ("worker: assembly open FAILED\n");
 		return (void *) 2;

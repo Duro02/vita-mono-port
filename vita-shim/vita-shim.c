@@ -23,6 +23,21 @@
 
 #define SHIM_TRACE_PATH "ux0:data/monoapp/shim-trace.log"
 
+/* 常开 STW 诊断 (不受 vita_trace_to_file 开关影响, 只记稀有事件). */
+static void
+stw_log (const char *tag, long a, long b)
+{
+	char tbuf [96];
+	SceUID fd = sceIoOpen (SHIM_TRACE_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
+	if (fd < 0)
+		return;
+	{
+		int n = snprintf (tbuf, sizeof (tbuf), "%s(%lx,%lx)\n", tag, a, b);
+		if (n > 0)
+			sceIoWrite (fd, tbuf, n);
+	}
+	sceIoClose (fd);
+}
 
 static void
 shim_tracef (const char *func, long a, long b, long c, long ret)
@@ -747,5 +762,225 @@ __wrap_fcntl (int fd, int cmd, ...)
 	default:
 		errno = EINVAL;
 		return -1;
+	}
+}
+
+/* ---------------- getrusage (newlib-vita 返回 -1/EINVAL, 线程池 hill-climbing
+ * 经 mono_cpu_usage 调用 g_error 直接 abort; 给全零即 "0% CPU 占用") ---------------- */
+#include <sys/resource.h>
+
+int
+__wrap_getrusage (int who, struct rusage *usage)
+{
+	(void) who;
+	if (usage)
+		memset (usage, 0, sizeof (*usage));
+	return 0;
+}
+
+/* ---------------- pthread_kill 仿真 + 可中断等待 ----------------
+ * Vita 内核无异步信号. Mono 混合挂起用 pthread_kill 发
+ * suspend/restart/abort 信号 (mono-threads-posix.c); 这里:
+ *  - __wrap_pthread_kill 只把信号记到表里, 返回成功;
+ *  - 所有阻塞等待 (sem/cond) 改写成 10ms 量子的定时等待,
+ *    每次超时检查本线程是否有待处理信号, 有则调
+ *    mono_threads_state_poll() 自挂起 (协作式收敛).
+ * 语义保持: 定时等待的超时/虚假唤醒对调用方都合法 (重入等待).
+ * 时钟注意: cond 用 CLOCK_MONOTONIC (Mono 建 cond 时 setclock 指定),
+ * sem_timedwait 按 POSIX 用 CLOCK_REALTIME. 混用会导致立即超时变忙转. */
+#include <semaphore.h>
+
+#define VITA_SIGSLOTS 32
+#define VITA_WAIT_QUANTUM_MS 10
+
+static struct {
+	pthread_t tid;
+	int sig;
+} vita_sigpending [VITA_SIGSLOTS];
+static pthread_mutex_t vita_siglock = PTHREAD_MUTEX_INITIALIZER;
+
+extern void mono_threads_state_poll (void);
+
+/* Mono 侧打了补丁 (patches/013) 的 mono_threads_pthread_kill 调这个,
+ * 把挂起/恢复信号记到表里 (__wrap_pthread_kill 是死代码: 没有
+ * HAVE_PTHREAD_KILL 时 Mono 根本不调 pthread_kill). */
+void
+vita_note_thread_signal (pthread_t tid, int sig)
+{
+	int i;
+
+	if (sig == 0)
+		return;
+	pthread_mutex_lock (&vita_siglock);
+	for (i = 0; i < VITA_SIGSLOTS; i++) {
+		if (vita_sigpending [i].sig == 0 ||
+		    pthread_equal (vita_sigpending [i].tid, tid)) {
+			vita_sigpending [i].tid = tid;
+			vita_sigpending [i].sig = sig;
+			break;
+		}
+	}
+	pthread_mutex_unlock (&vita_siglock);
+	stw_log ("vita-note-sig", (long) tid, (long) sig);
+}
+
+static void
+vita_add_qms (struct timespec *ts, long ms)
+{
+	ts->tv_sec += ms / 1000;
+	ts->tv_nsec += (ms % 1000) * 1000000L;
+	if (ts->tv_nsec >= 1000000000L) {
+		ts->tv_sec += 1;
+		ts->tv_nsec -= 1000000000L;
+	}
+}
+
+static int
+vita_ts_before (const struct timespec *a, const struct timespec *b)
+{
+	if (a->tv_sec != b->tv_sec)
+		return a->tv_sec < b->tv_sec;
+	return a->tv_nsec < b->tv_nsec;
+}
+
+/* 有待处理信号则消费并自挂起轮询; 其它线程零开销 (一次查表). */
+static void
+vita_maybe_self_suspend (void)
+{
+	pthread_t self = pthread_self ();
+	int i, sig = 0;
+
+	pthread_mutex_lock (&vita_siglock);
+	for (i = 0; i < VITA_SIGSLOTS; i++) {
+		if (vita_sigpending [i].sig != 0 &&
+		    pthread_equal (vita_sigpending [i].tid, self)) {
+			sig = vita_sigpending [i].sig;
+			vita_sigpending [i].sig = 0;
+			break;
+		}
+	}
+	pthread_mutex_unlock (&vita_siglock);
+	if (sig != 0) {
+		stw_log ("vita-self-suspend", (long) self, (long) sig);
+		mono_threads_state_poll ();
+		stw_log ("vita-resumed", (long) self, (long) sig);
+	}
+}
+
+int
+__wrap_pthread_kill (pthread_t thread, int sig)
+{
+	int i;
+
+	if (sig == 0)
+		return 0;
+	pthread_mutex_lock (&vita_siglock);
+	for (i = 0; i < VITA_SIGSLOTS; i++) {
+		if (vita_sigpending [i].sig == 0 ||
+		    pthread_equal (vita_sigpending [i].tid, thread)) {
+			vita_sigpending [i].tid = thread;
+			vita_sigpending [i].sig = sig;
+			break;
+		}
+	}
+	pthread_mutex_unlock (&vita_siglock);
+	return 0;
+}
+
+int
+__wrap_sem_wait (sem_t *sem)
+{
+	extern int __real_sem_timedwait (sem_t *, const struct timespec *);
+	/* 注意: 不要用 {0,0} 做快路径, Vita 的 sem_timedwait 可能对已过期
+	 * 时间回 EINVAL 而不是 ETIMEDOUT, 会导致等待直接失效. 老老实实
+	 * 进量子循环. */
+	for (;;) {
+		struct timespec now, dl;
+		clock_gettime (CLOCK_REALTIME, &now);
+		dl = now;
+		vita_add_qms (&dl, VITA_WAIT_QUANTUM_MS);
+		if (__real_sem_timedwait (sem, &dl) == 0)
+			return 0;
+		if (errno != ETIMEDOUT)
+			return -1;
+		vita_maybe_self_suspend ();
+	}
+}
+
+int
+__wrap_sem_timedwait (sem_t *sem, const struct timespec *abstime)
+{
+	extern int __real_sem_timedwait (sem_t *, const struct timespec *);
+	for (;;) {
+		struct timespec now, dl;
+		int r;
+		clock_gettime (CLOCK_REALTIME, &now);
+		if (!vita_ts_before (&now, abstime)) {
+			errno = ETIMEDOUT;
+			return -1;
+		}
+		dl = now;
+		vita_add_qms (&dl, VITA_WAIT_QUANTUM_MS);
+		if (vita_ts_before (abstime, &dl))
+			dl = *abstime;
+		r = __real_sem_timedwait (sem, &dl);
+		if (r == 0)
+			return 0;
+		if (errno != ETIMEDOUT)
+			return -1;
+		clock_gettime (CLOCK_REALTIME, &now);
+		if (!vita_ts_before (&now, abstime)) {
+			errno = ETIMEDOUT;
+			return -1;
+		}
+		vita_maybe_self_suspend ();
+	}
+}
+
+int
+__wrap_pthread_cond_wait (pthread_cond_t *cond, pthread_mutex_t *mutex)
+{
+	extern int __real_pthread_cond_timedwait (pthread_cond_t *,
+		pthread_mutex_t *, const struct timespec *);
+	for (;;) {
+		struct timespec now, dl;
+		int r;
+		clock_gettime (CLOCK_MONOTONIC, &now);
+		dl = now;
+		vita_add_qms (&dl, VITA_WAIT_QUANTUM_MS);
+		r = __real_pthread_cond_timedwait (cond, mutex, &dl);
+		if (r == 0)
+			return 0;
+		if (r != ETIMEDOUT)
+			return r;
+		vita_maybe_self_suspend ();
+	}
+}
+
+int
+__wrap_pthread_cond_timedwait (pthread_cond_t *cond, pthread_mutex_t *mutex,
+	const struct timespec *abstime)
+{
+	extern int __real_pthread_cond_timedwait (pthread_cond_t *,
+		pthread_mutex_t *, const struct timespec *);
+	for (;;) {
+		struct timespec now, dl;
+		int r;
+		clock_gettime (CLOCK_MONOTONIC, &now);
+		if (!vita_ts_before (&now, abstime))
+			return ETIMEDOUT;
+		dl = now;
+		vita_add_qms (&dl, VITA_WAIT_QUANTUM_MS);
+		if (vita_ts_before (abstime, &dl))
+			dl = *abstime;
+		r = __real_pthread_cond_timedwait (cond, mutex, &dl);
+		if (r == 0)
+			return 0;
+		if (r != ETIMEDOUT)
+			return r;
+		clock_gettime (CLOCK_MONOTONIC, &now);
+		if (!vita_ts_before (&now, abstime))
+			return ETIMEDOUT;
+		vita_maybe_self_suspend ();
 	}
 }

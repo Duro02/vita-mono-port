@@ -1,0 +1,46 @@
+--- a/mono/utils/mono-threads-posix.c
++++ b/mono/utils/mono-threads-posix.c
+@@ -165,6 +165,9 @@
+ }
+ #endif
+ 
++/* PS Vita shim (vita-shim.c): 记录异步挂起信号, 没有内核信号投递. */
++void vita_note_thread_signal (pthread_t tid, int signum);
++
+ int
+ mono_threads_pthread_kill (MonoThreadInfo *info, int signum)
+ {
+@@ -184,8 +187,16 @@
+ #elif defined (HAVE_PTHREAD_KILL)
+ 	result = pthread_kill (mono_thread_info_get_tid (info), signum);
+ #else
+-	result = -1;
+-	g_error ("pthread_kill () is not supported by this platform");
++	/* PS Vita (__vita__): 内核无异步信号, pthread_kill 只处理 sig 0.
++	 * 混合挂起依赖解释器/托管代码中的协作式安全点轮询:
++	 * 被挂起线程稍后会自己停下, 这里假装送达成功, 让调用方进入
++	 * pending 集合等待自挂起. 信号经 vita_note_thread_signal 记到
++	 * shim 的表里, 目标在 sem/cond 等待的 10ms 量子超时后调
++	 * mono_threads_state_poll 自挂起 (见 vita-shim.c 可中断等待).
++	 * 若目标永久阻塞在未包装的 native 调用里, STW 会一直等
++	 * (届时再把该调用包进 blocking 区). */
++	vita_note_thread_signal (mono_thread_info_get_tid (info), signum);
++	result = 0;
+ #endif
+ 
+ 	/*
+--- a/mono/metadata/threads.c
++++ b/mono/metadata/threads.c
+@@ -6420,7 +6420,11 @@
+ 		if (!state->silent)
+ 			g_async_safe_printf("Pkilling 0x%" G_GSIZE_FORMAT "x from 0x%" G_GSIZE_FORMAT "x\n", (gsize)MONO_NATIVE_THREAD_ID_TO_UINT (state->thread_array [i]), (gsize)MONO_NATIVE_THREAD_ID_TO_UINT (current));
+ 	#else
+-		g_error ("pthread_kill () is not supported by this platform");
++		/* PS Vita: 无异步信号, crash 转储时跳过对其它线程发信号,
++		 * 只转储当前线程. */
++		(void)state;
++		(void)current;
++		(void)current_idx;
+ 	#endif
+ 	}
+ }
