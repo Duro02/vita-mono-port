@@ -85,10 +85,13 @@ mono_worker (void *arg)
 	vita_register_dllmap ();
 	/* SGen 堆校验 + 分阶段日志: 每次回收前验证 nursery (坏堆立刻 abort),
 	 * level 3 打印 major 各阶段, 定位 T03 损坏. */
+	/* SGen verify (排查期开 "4,verify-before-collections", 平时关) */
+#if 0
 	{
 		extern void mono_gc_debug_set (const char *options);
 		mono_gc_debug_set ("4,verify-before-collections");
 	}
+#endif
 	MonoDomain *domain = mono_jit_init (runasm);
 	if (!domain) {
 		log_write ("worker: mono_jit_init FAILED\n");
@@ -138,7 +141,7 @@ main (void)
 	 *   ux0:data/monoapp/mono/4.5/mscorlib.dll */
 	setenv ("MONO_ENV_OPTIONS", "--interpreter --trace", 1);
 	setenv ("VITA_TRACE_FILE", "0", 1);
-	setenv ("MONO_GC_PARAMS", "nursery-size=8m", 1);
+	setenv ("MONO_GC_PARAMS", "nursery-size=8m,no-concurrent-sweep", 1);
 	{ extern int vita_trace_to_file; const char *e = getenv ("VITA_TRACE_FILE"); if (e && e [0] == '0') vita_trace_to_file = 0; }
 	setenv ("MONO_LOG_LEVEL", "debug", 1);
 	setenv ("MONO_LOG_MASK", "asm,type,gc,dll", 1);

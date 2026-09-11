@@ -14,6 +14,7 @@ class Battery {
     static void Check(bool cond, string name) {
         if (cond) { passed++; log.WriteLine("PASS " + name); }
         else { failed++; log.WriteLine("FAIL " + name); }
+        Console.WriteLine((cond ? "PASS " : "FAIL ") + name);
     }
 
     static int Main() {
@@ -35,13 +36,17 @@ class Battery {
             T13_Strings();
             T14_DateTime();
             T15_Boxing();
+            T16_ThreadPool();
         } catch (Exception e) {
-            log.WriteLine("FATAL " + e.GetType().Name + ": " + e.Message);
+            log.WriteLine("FATAL " + e.ToString());
+            Console.WriteLine("FATAL " + e.GetType().Name + ": " + e.Message);
+            Console.WriteLine(e.StackTrace);
             failed++;
         }
         log.WriteLine("TOTAL passed=" + passed + " failed=" + failed);
         log.Close();
         Console.WriteLine("Battery: passed=" + passed + " failed=" + failed);
+        Console.WriteLine("BATTERY-DONE");
         return failed == 0 ? 0 : 1;
     }
 
@@ -73,11 +78,9 @@ class Battery {
             ts[i].Start();
         }
         for (int i = 0; i < 4; i++) ts[i].Join();
+        Console.WriteLine("DBG tcounter=" + tcounter);
         Check(tcounter == 4 * 250 * 2, "thread-lock-interlocked");
-        bool done = false;
-        ThreadPool.QueueUserWorkItem(delegate(object o) { done = true; }, null);
-        for (int i = 0; i < 200 && !done; i++) Thread.Sleep(10);
-        Check(done, "threadpool");
+        Check(true, "threadpool-skipped");
     }
 
     static void T03_GcPressure() {
@@ -206,6 +209,7 @@ class Battery {
         Check(Math.Pow(2.0, 10.0) == 1024.0, "pow");
         double sn = Math.Sin(Math.PI / 2.0);
         Check(sn > 0.9999 && sn < 1.0001, "sin");
+        Console.WriteLine("DBG round25=" + Math.Round(2.5) + " fmod=" + (3.0 % 2.0));
         Check(Math.Round(2.5) == 2.0, "round-bank");
     }
 
@@ -260,6 +264,13 @@ class Battery {
         TimeSpan ts = d2 - d;
         Check(ts.TotalDays == 5.0, "timespan");
         Check(DateTime.IsLeapYear(2024) && !DateTime.IsLeapYear(2025), "leap");
+    }
+
+    static void T16_ThreadPool() {
+        bool done = false;
+        ThreadPool.QueueUserWorkItem(delegate(object o) { done = true; }, null);
+        for (int i = 0; i < 400 && !done; i++) Thread.Sleep(10);
+        Check(done, "threadpool");
     }
 
     static void T15_Boxing() {

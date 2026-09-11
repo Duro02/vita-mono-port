@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <psp2/kernel/sysmem.h>
+#include <psp2/io/fcntl.h>
 #include <psp2/kernel/threadmgr.h>
 #include <mono/utils/mono-dl-fallback.h>
 
@@ -262,13 +263,29 @@ SystemNative_OpenDir (const char *path)
 	return opendir (path);
 }
 
+/* 官方 PAL 约定 (dotnet pal.io.c): 成功/到尾都返回 0, 到尾时
+ * Name=NULL. managed 凭 Name==NULL 结束. 之前版本错写成 void**
+ * 只置前 4 字节, NameLength/InodeType 留垃圾. */
+struct VitaDirEnt {
+	void *Name;
+	int NameLength;
+	int InodeType;
+};
+
 int
-SystemNative_ReadDirR (void *dir, unsigned char *buffer, int bufferSize, void **result)
+SystemNative_ReadDirR (void *dir, unsigned char *buffer, int bufferSize, void *result)
 {
-	struct dirent *e = readdir ((DIR *) dir);
+	struct dirent *e;
+	struct VitaDirEnt *out = (struct VitaDirEnt *) result;
+	/* 官方约定 (corefx FileSystemEnumerator): 0=读到条目, -1=到尾,
+	 * 其它=errno. 之前到尾也返 0, managed 当成功死循环. */
+	errno = 0;
+	e = readdir ((DIR *) dir);
 	if (!e) {
-		*result = NULL;
-		return 0;
+		out->Name = NULL;
+		out->NameLength = 0;
+		out->InodeType = 0;
+		return errno != 0 ? errno : -1;
 	}
 	{
 		size_t n = strlen (e->d_name);
@@ -276,7 +293,9 @@ SystemNative_ReadDirR (void *dir, unsigned char *buffer, int bufferSize, void **
 			return -1;
 		memcpy (buffer, e->d_name, n + 1);
 	}
-	*result = dir;
+	out->Name = buffer;
+	out->NameLength = (int) strlen ((char *) buffer);
+	out->InodeType = 0;
 	return 0;
 }
 
