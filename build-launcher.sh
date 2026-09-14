@@ -4,8 +4,8 @@ set -e
 
 export PATH=/usr/local/vitasdk/bin:$PATH
 VITASDK=/usr/local/vitasdk
-ROOT=$HOME/projects/vita-mono-port
-MONO_SRC=${MONO_SRC:-$HOME/projects/mono}
+ROOT=$HOME/Projects/vita-port/vita-mono-port
+MONO_SRC=${MONO_SRC:-$HOME/Projects/vita-port/mono}
 OUT=$ROOT/vita-launcher/build
 mkdir -p "$OUT"
 

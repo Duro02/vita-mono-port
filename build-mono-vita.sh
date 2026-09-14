@@ -3,15 +3,15 @@
 # 用法: ./build-mono-vita.sh [configure|make|all]
 set -e
 
-MONO_SRC=${MONO_SRC:-$HOME/projects/mono}
-PREFIX=${PREFIX:-$HOME/projects/mono-vita-install}
+MONO_SRC=${MONO_SRC:-$HOME/Projects/vita-port/mono}
+PREFIX=${PREFIX:-$HOME/Projects/vita-port/mono-vita-install}
 
 # 交叉编译环境修正（详见 patches/ 与 README 决策记录）:
 # -DSTRERROR_R_CHAR_P : newlib 的 strerror_r 是 GNU 语义(char*)，
 #                       AC_FUNC_STRERROR_R 交叉时探测不了，强制指定
 # -DHAVE_MREMAP=0     : Vita 内核无 mremap；newlib 定义 __NetBSD__ 导致 dlmalloc 误开
 # 补上缺失 POSIX 原语的 shim (mmap/sched_yield/存根, 见 vita-shim/)
-SHIM=${SHIM:-$HOME/projects/vita-mono-port/vita-shim}
+SHIM=${SHIM:-$HOME/Projects/vita-port/vita-mono-port/vita-shim}
 # -D_POSIX_C_SOURCE/-D_DEFAULT_SOURCE:
 #   newlib 的完整 sigaction 只在 rtems 分支, 用 shim 兼容;
 #   SIGPWR 等需 _DEFAULT_SOURCE 才可见 (注意 __BSD_VISIBLE 会被 features.h 覆盖)
