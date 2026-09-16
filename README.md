@@ -19,7 +19,7 @@
 
 - [x] M0 VitaSDK 安装 + hello-world VPK 真机验证（流水线：编译→vpk→ux0→VitaShell 安装）
 - [x] M1 libmonosgen 交叉编译成 Vita 静态库
-- [x] M2 C# hello world 在 Vita 上运行（模拟器已通，真机待验收；另见 `docs/PROGRESS.md`）
+- [ ] M2 C# hello world + 一致性电池在 Vita 上运行（模拟器 76/2 已通；**真机验收进行中**，已修 exec 内存/icache/对齐三个真机特有 bug，见 `docs/PROGRESS.md`）
 - [ ] M3 MonoGame 最小渲染（vitaGL 后端）
 - [ ] M4 Stardew Valley 1.6 启动
 

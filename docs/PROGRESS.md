@@ -1,15 +1,17 @@
-# 进度（2026-09-14 更新，Vita3K 模拟器上验证）
+# 进度（2026-09-16 更新：真机调试进行中）
 
 最终目标：Stardew Valley 1.6 在 hacked PS Vita (PCH-1000, Enso) 上运行。
-当前阶段：M2 收尾（Mono 运行时 + C# 一致性电池），M3 未开始。
+当前阶段：**M2-hw 真机验收进行中**——模拟器侧已达标，真机侧连环崩溃逐个排查中，M3 未开始。
+
+仓库已公开：https://github.com/Duro02/vita-mono-port
 
 ## 里程碑
 
 - [x] M0：VitaSDK 工具链 + hello-world VPK，真机（PCH-1000）跑通
 - [x] M1：`libmonosgen-2.0.a` 等静态库交叉编译通过（Mono 6.12.0.99，interpreter-only）
 - [x] M2-sim：C# hello 在 Vita3K 跑通（`Main returned`，返回值 42，`out.txt` 落盘）
-- [x] M2-battery：C# 一致性电池 **76 passed / 2 failed**（见下）
-- [ ] M2-hw：同一 VPK 在真机验收一次（USB 推包 → VitaShell 安装 → 运行）
+- [x] M2-battery：C# 一致性电池 **76~77 passed / 1~2 failed**（见下）
+- [ ] **M2-hw：真机验收进行中**——已推包多轮，修了 3 个真机特有 bug（#17-#19），最新修复（freerange 页对齐）已部署、**等真机复跑确认**
 - [ ] M3：MonoGame 最小渲染（vitaGL 后端）
 - [ ] M4：Stardew Valley 1.6 启动
 
@@ -57,6 +59,16 @@ T12 集合/ T13 字符串/ T14 日期/ T15 装箱/ T16 线程池 —— 全部 P
 15. `GetFiles` 无限循环 → CoreFX 约定到尾返 **-1**（我们返 0，managed 当成功死循环）→ `SystemNative_ReadDirR` 到尾返 -1 + 结构体按官方补齐
 16. newlib `readdir` 不终止 → `opendir/readdir/closedir/rewinddir` 直调 `sceIoDopen/Dread/Dclose`
 
+### 真机调试（2026-09-15/16，psp2dmp 分析）
+
+真机跑了 4+ 轮，每轮一个 `psp2core-*.psp2dmp`（gzip ELF core，手动解 THREAD_REG_INFO/MEM_BLK_INFO/TTY_INFO2）：
+
+17. **取指 abort**：崩在 mono 生成的 trampoline 页里（PC=堆地址）。根因：`mmap(PROT_EXEC)` 给的是 `USER_RW` 普通块，Vita3K 不查执行权限、真机内核查 → `sceKernelAllocMemBlockForVM` + `OpenVMDomain`（PPSSPP 同款路线）；VM 块按 ≥4MB arena 整块申请（64KB 会被 `ILLEGAL_MEMBLOCK_SIZE` 拒），余量进 exec 专用空闲链表
+18. **icache flush 是空调用**：`__builtin___clear_cache` 在 arm-vita-eabi 下展开为空 → `mono_arch_flush_icache` 加 `__vita__` 分支调 `vita_flush_icache` → `sceKernelSyncVMDomain`（`patches/014`）
+19. **lock-free-alloc.c:146 assert（当前最新修复，待真机复验）**：`sb_header == sb_header_for_addr` 断言——要求 superblock 按 block_size 对齐。根因在 shim：`vita_freerange_take_locked` 用**原始 len** 切空闲区间（未页对齐）→ 剩余区间基址非 4K 对齐 → 复用时返回非对齐地址（trace 实锤 `mmap-in(1000)`→`mmap-reuse(8a770c00)`）→ `mono_valloc` 拿到非对齐页 → alloc_sb 断言 → abort。修法：取用按 `page_round(len)` 切 + munmap 入链表前 snap 到页边界（非对齐 fringe 泄漏不回收）
+    - 次生现象：assert→abort 后 mono 崩溃摘要器再崩（`g_list_copy`/`mono_native_state_add_thread`，各 dump PC 不同、DFAR=6 同签名），primary 消息被吞 → 已从 TTY_INFO2 挖出原始 assert
+    - 诊断手段：`__wrap_write` 把 fd1/2 落盘 `vita-trace.log`；探针 `mmap-in/mmap-reuse/vm-wtest/vmsync-err/mprotect-exec`
+
 ## 已知问题（不阻塞 M2，真机/M3 前重估）
 
 - P3 `round-bank`（上）、P3 首轮 thread 偶发丢数（上）
@@ -64,7 +76,7 @@ T12 集合/ T13 字符串/ T14 日期/ T15 装箱/ T16 线程池 —— 全部 P
 - `munmap-nomatch` 子区间泄漏（只增不减，256MB 水位内安全）
 - SGen `verify-before-collections` 默认关（`main.c` 里 `#if 0`，排查时开）
 - 模拟器宿主偶发崩溃（Trace/breakpoint、SIGSEGV，多与退出清理相关；以 guest 文件日志为准）
-- 真机 VPK 还是 9 月 9 日的旧包，M2-hw 待推新包验收
+- **真机未过**：最新包（含 freerange 页对齐修复）已部署到 ux0:app/MONO00002，等复跑；此前每轮崩溃根因见上面 #17-#19
 
 ## 探针索引（`probe/`，纯本地，不上真机）
 
@@ -74,5 +86,5 @@ p13 目录枚举 / p14-p19 fmod/Round 排查 / p22 Round 位+线程十连 / p23 
 
 ## 下一步
 
-1. 真机 M2-hw 验收（USB 推最新 `MONO00002.vpk` + dlls，跑电池 + p23）
+1. **真机复跑 M2-hw**：断 USB → 跑 "Mono Vita Test" → 读 `launcher.log`/`battery-result.txt`/新 psp2dmp，验证 freerange 对齐修复是否过了 jit_init；若再崩按同样手法继续挖
 2. M3 调研：MonoGame→vitaGL 后端（图形/音频/输入/存储路径策略：相对路径 + 数据目录，cwd 方案）
