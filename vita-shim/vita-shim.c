@@ -86,13 +86,19 @@ shim_trace (const char *msg)
 /* ---------------- mmap family ---------------- */
 
 #define VITA_BLOCK_TYPE_DATA  SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_RW
-#define VITA_BLOCK_TYPE_EXEC  SCE_KERNEL_MEMBLOCK_TYPE_USER_RW /* 占位, JIT 后续走 VM domain */
+#define VITA_VM_CHUNK         (4 * 1024 * 1024)	/* exec arena 单次扩张粒度 */
+/* exec 内存走 VM domain (用户态唯一可执行页来源, PPSSPP 同款路径):
+ *   sceKernelAllocMemBlockForVM 分配 (单块 <=16MB)
+ *   sceKernelOpenVMDomain          使进程全部 VM 块可执行 (每分配一次须重开)
+ *   sceKernelSyncVMDomain          写码后刷 D/I cache (vita_flush_icache 钩这里) */
 
 struct vita_mapping {
 	void   *base;    /* 对齐后的实际地址 */
 	SceUID  uid;
 	size_t  size;    /* 对齐后的实际大小 */
 	int     prot;
+	int     exec;    /* 调用方要求 PROT_EXEC */
+	int     is_vm;   /* 来自 sceKernelAllocMemBlockForVM */
 	struct vita_mapping *next;
 };
 
@@ -100,7 +106,8 @@ static struct vita_mapping *vita_mappings = NULL;
 static pthread_mutex_t vita_map_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* 前向声明 (定义在 mmap 之后) */
-static void *vita_freerange_take_locked (size_t len);
+static void *vita_freerange_take_locked (size_t len, int want_exec);
+static void vita_freerange_add_locked (void *addr, size_t len, int exec);
 static void vita_mmap_fill (void *base, size_t len, int fd, off_t offset);
 
 /* 前向声明 (定义在文件路径 wraps 区) */
@@ -130,7 +137,7 @@ vita_map_find (const void *addr)
 void *
 mmap (void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 {
-	shim_trace ("mmap");
+	stw_log ("mmap-in", (long) len, (long) prot | ((long) fd << 8));
 	struct vita_mapping *m;
 	SceUID uid;
 	void *base = NULL;
@@ -144,12 +151,16 @@ mmap (void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 		return MAP_FAILED;
 	}
 
-	/* 先复用 munmap 攒下的空闲区间 (地址原地保留, 必须清零) */
+	/* 先复用 munmap 攒下的空闲区间 (地址原地保留, 必须清零).
+	 * exec 区间只能复用给 exec 请求 (RW 区间没有执行权限).
+	 * 必须按页对齐尺寸取: 用原始 len 切会把剩余基址切成非页对齐,
+	 * 后面 mono_valloc 拿到非页对齐地址 -> lock-free-alloc assert. */
 	pthread_mutex_lock (&vita_map_lock);
 	{
-		void *reuse = vita_freerange_take_locked (len);
+		void *reuse = vita_freerange_take_locked (page_round (len), want_exec);
 		if (reuse) {
 			pthread_mutex_unlock (&vita_map_lock);
+			stw_log ("mmap-reuse", (long) reuse, (long) want_exec);
 			memset (reuse, 0, len);
 			if (fd >= 0) {
 				vita_mmap_fill (reuse, len, fd, offset);
@@ -169,9 +180,37 @@ mmap (void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 	}
 
 	alen = page_round (len);
-	uid = sceKernelAllocMemBlock ("mono-mmap",
-		want_exec ? VITA_BLOCK_TYPE_EXEC : VITA_BLOCK_TYPE_DATA,
-		alen, NULL);
+	uid = -1;
+	m->is_vm = 0;
+	m->size = alen;
+	if (want_exec) {
+		/* VM domain 按 1MB 粒度分配 (64KB 会被 ILLEGAL_MEMBLOCK_SIZE 拒).
+		 * 按 >=4MB 的整块拿, 余量进 exec 空闲链表给后续 exec mmap 复用. */
+		size_t alloc = alen < VITA_VM_CHUNK ? VITA_VM_CHUNK : alen;
+		alloc = (alloc + 0xFFFFF) & ~(size_t) 0xFFFFF;
+		uid = sceKernelAllocMemBlockForVM ("mono-code", alloc);
+		if (uid >= 0 && sceKernelGetMemBlockBase (uid, &base) >= 0 && base) {
+			m->is_vm = 1;
+			m->size = alloc;		/* mapping 覆盖整块; 余量稍后挂空闲链表 */
+			sceKernelOpenVMDomain ();	/* 新块须重新开 domain 才可执行 */
+			stw_log ("mmap-exec", (long) base, (long) alloc);
+			{	/* 真机探针: VM 页可写? 写回读验证 */
+				volatile unsigned *p = (volatile unsigned *) base;
+				*p = 0xA5A5A5A5;
+				stw_log ("vm-wtest", (long) base, (long) *p);
+				*p = 0;
+			}
+		} else {
+			/* VM domain 不可用 (模拟器未实现?) -> 退回普通块 */
+			stw_log ("mmap-novm", (long) alen, (long) uid);
+			if (uid >= 0)
+				sceKernelFreeMemBlock (uid);
+			uid = -1;
+			base = NULL;
+		}
+	}
+	if (uid < 0)
+		uid = sceKernelAllocMemBlock ("mono-mmap", VITA_BLOCK_TYPE_DATA, alen, NULL);
 	if (uid < 0 || sceKernelGetMemBlockBase (uid, &base) < 0 || !base) {
 		if (uid >= 0)
 			sceKernelFreeMemBlock (uid);
@@ -181,7 +220,7 @@ mmap (void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 		return MAP_FAILED;
 	}
 
-	memset (base, 0, alen);
+	memset (base, 0, m->is_vm ? len : alen);	/* VM 块余量由空闲链表复用时再清 */
 
 	/* 文件映射: 把文件内容读进来 (mono 用它加载程序集!) */
 	if (fd >= 0) {
@@ -193,12 +232,15 @@ mmap (void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 
 	m->base = base;
 	m->uid  = uid;
-	m->size = alen;
 	m->prot = prot;
+	m->exec = want_exec;
 
 	pthread_mutex_lock (&vita_map_lock);
 	m->next = vita_mappings;
 	vita_mappings = m;
+	/* VM 块比请求大: 尾巴进 exec 空闲链表 */
+	if (m->is_vm && m->size > alen)
+		vita_freerange_add_locked ((char *) base + alen, m->size - alen, 1);
 	pthread_mutex_unlock (&vita_map_lock);
 
 	return base;
@@ -210,24 +252,39 @@ mmap (void *addr, size_t len, int prot, int flags, int fd, off_t offset)
 struct vita_freerange {
 	void   *base;
 	size_t  size;
+	int     exec;    /* 区间所在块是否 exec 申请 (exec 区间仅供 exec 复用) */
 	struct vita_freerange *next;
 };
 
 static struct vita_freerange *vita_freeranges = NULL;
 
-/* 有序插入 + 全链合并相邻区间. 调用时已持有 vita_map_lock. */
+/* 有序插入 + 全链合并相邻区间 (exec 标志不同不合并). 调用时已持有 vita_map_lock. */
 static void
-vita_freerange_add_locked (void *addr, size_t len)
+vita_freerange_add_locked (void *addr, size_t len, int exec)
 {
 	struct vita_freerange *r, **pp, *cur, *next;
 
 	if (len == 0)
 		return;
+	/* 只保留页对齐内部区间: mono 会 munmap 非页对齐边界
+	 * (文件映射按文件尺寸释放, valloc_aligned 按非页粒度裁剪).
+	 * 非对齐 fringe 留在 mapping 里当泄漏, 绝不能进链表 —
+	 * 一旦非对齐基址被复用返回给 mono_valloc, lock-free-alloc
+	 * 的 sb_header 对齐 assert 就会炸. */
+	{
+		char *ab = (char *) page_round ((size_t) addr);
+		char *ae = (char *) (((size_t) addr + len) & ~(PAGE_SIZE - 1));
+		if (ae <= ab)
+			return;
+		addr = ab;
+		len = (size_t) (ae - ab);
+	}
 	r = (struct vita_freerange *)malloc (sizeof (*r));
 	if (!r)
 		return;
 	r->base = addr;
 	r->size = len;
+	r->exec = exec;
 	pp = &vita_freeranges;
 	while (*pp && (*pp)->base < addr)
 		pp = &(*pp)->next;
@@ -238,7 +295,7 @@ vita_freerange_add_locked (void *addr, size_t len)
 	while (cur && cur->next) {
 		char *cend = (char *)cur->base + cur->size;
 		next = cur->next;
-		if (cend >= (char *)next->base) {
+		if (cend >= (char *)next->base && next->exec == cur->exec) {
 			char *nend = (char *)next->base + next->size;
 			if (nend > cend)
 				cur->size = nend - (char *)cur->base;
@@ -250,15 +307,15 @@ vita_freerange_add_locked (void *addr, size_t len)
 	}
 }
 
-/* first-fit 取一块 >= len 的空闲区间 (精确 carve, 剩余挂回).
+/* first-fit 取一块 >= len 且 exec 标志相同的空闲区间 (精确 carve, 剩余挂回).
  * 调用时已持有 vita_map_lock. 成功返回基址, 失败返回 NULL. */
 static void *
-vita_freerange_take_locked (size_t len)
+vita_freerange_take_locked (size_t len, int want_exec)
 {
 	struct vita_freerange **pp = &vita_freeranges;
 	while (*pp) {
 		struct vita_freerange *r = *pp;
-		if (r->size >= len) {
+		if (r->size >= len && r->exec == want_exec) {
 			void *base = r->base;
 			if (r->size == len) {
 				*pp = r->next;
@@ -345,7 +402,7 @@ munmap (void *addr, size_t len)
 			free (m);
 			return ret;
 		}
-		vita_freerange_add_locked (addr, len);
+		vita_freerange_add_locked (addr, len, m->exec);
 		pthread_mutex_unlock (&vita_map_lock);
 		stw_log ("munmap-partial", (long) addr, (long) len);
 		return 0;
@@ -357,10 +414,41 @@ mprotect (void *addr, size_t len, int prot)
 {
 	shim_trace ("mprotect");
 	/* Vita 的权限在分配时确定, 无法动态改.
-	 * RW 数据块上的 EXEC 请求先放行(将来 JIT 走 VM domain). */
+	 * 数据块上的 EXEC 提升请求做不到 — 打日志观察是否真发生. */
+	if (prot & PROT_EXEC) {
+		struct vita_mapping *m = vita_map_find (addr);
+		if (!m || !m->is_vm)
+			stw_log ("mprotect-exec", (long) addr, (long) len);
+	}
 	shim_tracef ("mprotect", (long) addr, (long) len, (long) prot, 0);
-	(void)addr; (void)len; (void)prot;
 	return 0;
+}
+
+/* icache 冲刷 (mono_arch_flush_icache -> 这里).
+ * 注意不能叫 __clear_cache: GCC 把它当 builtin, vita-eabi 上展开为空操作.
+ * 仅对 VM domain 块调 sceKernelSyncVMDomain 刷 D/I cache. */
+void
+vita_flush_icache (void *begp, void *endp)
+{
+	struct vita_mapping *m;
+	char *beg = (char *) begp, *end = (char *) endp;
+
+	pthread_mutex_lock (&vita_map_lock);
+	for (m = vita_mappings; m; m = m->next) {
+		char *mb, *me, *sb, *se;
+		if (!m->is_vm)
+			continue;
+		mb = (char *) m->base;
+		me = mb + m->size;
+		sb = beg > mb ? beg : mb;
+		se = end < me ? end : me;
+		if (sb < se) {
+			int r = sceKernelSyncVMDomain (m->uid, sb, (SceSize) (se - sb));
+			if (r < 0)
+				stw_log ("vmsync-err", (long) sb, (long) r);
+		}
+	}
+	pthread_mutex_unlock (&vita_map_lock);
 }
 
 int
@@ -1125,13 +1213,22 @@ vita_trace_write (const char *b, int n)
 	return n;
 }
 
-/* write(1/2) 转接到 sceIo, 修复 mono 内部日志黑洞 */
+/* write(1/2) 转接到 sceIo, 修复 mono 内部日志黑洞; 同时落盘,
+ * 否则真机上 g_error/SIGSEGV handler 的输出只有控制台可见. */
 ssize_t
 __wrap_write (int fd, const void *buf, size_t count)
 {
 	extern ssize_t __real_write (int fd, const void *buf, size_t count);
-	if (fd == 1 || fd == 2)
-		return sceIoWrite (fd, buf, count);
+	if (fd == 1 || fd == 2) {
+		int ret = sceIoWrite (fd, buf, count);
+		SceUID f = sceIoOpen ("ux0:data/monoapp/vita-trace.log",
+			SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
+		if (f >= 0) {
+			sceIoWrite (f, buf, count);
+			sceIoClose (f);
+		}
+		return ret;
+	}
 	return __real_write (fd, buf, count);
 }
 

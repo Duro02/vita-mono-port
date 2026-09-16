@@ -1,0 +1,14 @@
+--- a/mono/mini/mini-arm.c
++++ b/mono/mini/mini-arm.c
+@@ -1075,6 +1075,11 @@
+ #if defined(MONO_CROSS_COMPILE)
+ #elif __APPLE__
+ 	sys_icache_invalidate (code, size);
++#elif defined(__vita__)
++	/* vita-eabi 上 __builtin___clear_cache 是空操作; 走 vita-shim
++	 * (对 VM domain 块调 sceKernelSyncVMDomain). */
++	extern void vita_flush_icache (void *beg, void *end);
++	vita_flush_icache ((char*)code, (char*)code + size);
+ #else
+     __builtin___clear_cache ((char*)code, (char*)code + size);
+ #endif
